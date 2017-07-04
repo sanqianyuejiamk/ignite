@@ -64,7 +64,6 @@ import org.apache.ignite.internal.pagemem.snapshot.StartSnapshotOperationAckDisc
 import org.apache.ignite.internal.processors.affinity.AffinityTopologyVersion;
 import org.apache.ignite.internal.processors.affinity.GridAffinityAssignmentCache;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridClientPartitionTopology;
-import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtPartitionState;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtPartitionTopology;
 import org.apache.ignite.internal.processors.cache.distributed.dht.GridDhtTopologyFuture;
 import org.apache.ignite.internal.processors.cache.distributed.dht.preloader.GridDhtPartitionDemandMessage;
@@ -86,6 +85,7 @@ import org.apache.ignite.internal.processors.query.schema.SchemaNodeLeaveExchang
 import org.apache.ignite.internal.processors.timeout.GridTimeoutObject;
 import org.apache.ignite.internal.util.GridListSet;
 import org.apache.ignite.internal.util.future.GridCompoundFuture;
+import org.apache.ignite.internal.util.GridPartitionStateMap;
 import org.apache.ignite.internal.util.future.GridFutureAdapter;
 import org.apache.ignite.internal.util.lang.IgnitePair;
 import org.apache.ignite.internal.util.tostring.GridToStringExclude;
@@ -264,7 +264,7 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                                 exchFut = exchangeFuture(exchId, evt, cache, null, msg);
                             }
                         }
-                        else
+                        else if (msg.exchangeId().topologyVersion().topologyVersion() >= cctx.discovery().localJoinEvent().topologyVersion())
                             exchangeFuture(msg.exchangeId(), null, null, null, null)
                                 .onAffinityChangeMessage(evt.eventNode(), msg);
                     }
@@ -522,6 +522,14 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
                 "Client node disconnected: " + cctx.igniteInstanceName()) :
             new IgniteInterruptedCheckedException("Node is stopping: " + cctx.igniteInstanceName());
 
+        // Stop exchange worker
+        U.cancel(exchWorker);
+
+        if (log.isDebugEnabled())
+            log.debug("Before joining on exchange worker: " + exchWorker);
+
+        U.join(exchWorker, log);
+
         // Finish all exchange futures.
         ExchangeFutureSet exchFuts0 = exchFuts;
 
@@ -537,13 +545,6 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
             for (int cnt = 0; cnt < cctx.gridConfig().getRebalanceThreadPoolSize(); cnt++)
                 cctx.io().removeOrderedHandler(true, rebalanceTopic(cnt));
         }
-
-        U.cancel(exchWorker);
-
-        if (log.isDebugEnabled())
-            log.debug("Before joining on exchange worker: " + exchWorker);
-
-        U.join(exchWorker, log);
 
         ResendTimeoutObject resendTimeoutObj = pendingResend.getAndSet(null);
 
@@ -1038,7 +1039,7 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
             cctx.versions().last(),
             true);
 
-        Map<Object, T2<Integer,Map<Integer, GridDhtPartitionState>>> dupData = new HashMap<>();
+        Map<Object, T2<Integer, GridPartitionStateMap>> dupData = new HashMap<>();
 
         for (CacheGroupContext grp : cctx.cache().cacheGroups()) {
             if (!grp.isLocal()) {
@@ -1085,7 +1086,7 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
      * @param affKey Cache affinity key.
      */
     private void addPartitionMap(GridDhtPartitionsSingleMessage m,
-        Map<Object, T2<Integer, Map<Integer, GridDhtPartitionState>>> dupData,
+        Map<Object, T2<Integer, GridPartitionStateMap>> dupData,
         boolean compress,
         Integer cacheId,
         GridDhtPartitionMap map,
@@ -1093,7 +1094,7 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
         Integer dupDataCache = null;
 
         if (compress) {
-            T2<Integer, Map<Integer, GridDhtPartitionState>> state0 = dupData.get(affKey);
+            T2<Integer, GridPartitionStateMap> state0 = dupData.get(affKey);
 
             if (state0 != null && state0.get2().equals(map.map())) {
                 dupDataCache = state0.get1();

@@ -15,15 +15,14 @@
  * limitations under the License.
  */
 
-import angular from 'angular';
+export default class {
+    static $inject = ['$scope'];
 
-import component from './component';
-import service from './service';
+    constructor($scope) {
+        Object.assign(this, {$scope});
+    }
 
-import pcbScaleNumber from './components/pcbScaleNumber';
-
-export default angular
-    .module('ignite-console.page-configure-basic', [])
-    .component('pageConfigureBasic', component)
-    .directive('pcbScaleNumber', pcbScaleNumber)
-    .service('PageConfigureBasic', service);
+    areAllSelected() {
+        return this.$scope.$matches.every(({index}) => this.$scope.$isActive(index));
+    }
+}
